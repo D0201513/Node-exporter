@@ -1,6 +1,6 @@
 ---
 - name: Deploy Python Prometheus Exporter
-  hosts: TMDUCC11DOC0004
+  hosts: 10.17.10.18
   become: yes
 
   tasks:
