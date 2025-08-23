@@ -58,6 +58,7 @@
           ram_used = Gauge('asset_ram_used_mb', 'Used RAM in MB', ['hostname'])
           disk_total = Gauge('asset_disk_total_bytes', 'Total disk space in bytes', ['hostname', 'disk'])
           disk_used = Gauge('asset_disk_used_bytes', 'Used disk space in bytes', ['hostname', 'disk'])
+          cpu_utilization = Gauge('asset_cpu_utilization_percent', 'CPU utilization percentage', ['hostname'])  # 🔹 Added
 
           # Info metrics (as labels)
           cpu_model = Info('asset_cpu_model_info', 'CPU model info')
@@ -109,6 +110,7 @@
               cpu_cores.labels(hostname=hostname).set(psutil.cpu_count(logical=False))
               ram_used.labels(hostname=hostname).set(round(ram.used / 1024 / 1024))
               ram_total.labels(hostname=hostname).set(round(ram.total / 1024 / 1024))
+              cpu_utilization.labels(hostname=hostname).set(psutil.cpu_percent(interval=None))  # 🔹 Added
 
               cpu_model.info({'hostname': hostname, 'model': cpu_info})
               cpu_generation.info({'hostname': hostname, 'generation': cpu_gen})
