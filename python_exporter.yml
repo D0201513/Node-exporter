@@ -52,25 +52,33 @@
           # Hostname
           hostname = socket.gethostname()
 
-          # Prometheus Gauges
+          # Gauges
           cpu_cores = Gauge('asset_cpu_cores', 'CPU core count', ['hostname'])
           ram_total = Gauge('asset_ram_total_mb', 'Total RAM in MB', ['hostname'])
           ram_used = Gauge('asset_ram_used_mb', 'Used RAM in MB', ['hostname'])
           disk_total = Gauge('asset_disk_total_bytes', 'Total disk space in bytes', ['hostname', 'disk'])
           disk_used = Gauge('asset_disk_used_bytes', 'Used disk space in bytes', ['hostname', 'disk'])
-          cpu_utilization = Gauge('asset_cpu_utilization_percent', 'CPU utilization percentage', ['hostname'])  # 🔹 Added
+          packages_count = Gauge('asset_installed_packages_total', 'Installed package count', ['hostname'])
+          users_gauge = Gauge('asset_logged_in_users', 'Number of logged-in users', ['hostname'])
+          uptime_gauge = Gauge('asset_uptime_seconds', 'System uptime in seconds', ['hostname'])
+          cpu_utilization = Gauge('asset_cpu_utilization_percent', 'CPU utilization percentage', ['hostname'])
 
-          # Info metrics (as labels)
+          # Info metrics
           cpu_model = Info('asset_cpu_model_info', 'CPU model info')
+          processor_model = Info('asset_processor_model_info', 'Processor model')
           cpu_generation = Info('asset_cpu_generation_info', 'CPU generation')
           os_version = Info('asset_os_version_info', 'OS version info')
           kernel_version = Info('asset_kernel_info', 'Kernel version')
           architecture = Info('asset_architecture_info', 'System architecture')
-          ip_info = Info('asset_ip_address_info', 'IP address')
+          ip_info = Info('asset_ip_address_info', 'Primary IP address')
+          ip_all_info = Info('asset_all_ip_info', 'All IP addresses')
           mac_info = Info('asset_mac_address_info', 'MAC address')
           serial_info = Info('asset_serial_number_info', 'System serial number')
+          manufacturer_info = Info('asset_manufacturer_info', 'System manufacturer')
+          model_info = Info('asset_model_info', 'System model')
+          bios_info = Info('asset_bios_info', 'BIOS version')
 
-          # Helper: Get IP
+          # Helpers
           def get_ip():
               for iface_name, iface_addrs in psutil.net_if_addrs().items():
                   for addr in iface_addrs:
@@ -78,7 +86,14 @@
                           return addr.address
               return 'unknown'
 
-          # Helper: Get MAC
+          def get_all_ips():
+              ips = []
+              for iface, addrs in psutil.net_if_addrs().items():
+                  for addr in addrs:
+                      if addr.family == socket.AF_INET and not addr.address.startswith("127."):
+                          ips.append(f"{iface}:{addr.address}")
+              return ips
+
           def get_mac():
               for iface_name, iface_addrs in psutil.net_if_addrs().items():
                   for addr in iface_addrs:
@@ -86,40 +101,88 @@
                           return addr.address
               return 'unknown'
 
-          # Helper: Serial number
           def get_serial_number():
               try:
-                  output = subprocess.check_output(['dmidecode', '-s', 'system-serial-number'], text=True)
-                  return output.strip()
+                  return subprocess.check_output(['dmidecode', '-s', 'system-serial-number'], text=True).strip()
               except Exception:
                   return 'unknown'
 
-          # CPU generation
+          def get_manufacturer():
+              try:
+                  return subprocess.check_output(['dmidecode', '-s', 'system-manufacturer'], text=True).strip()
+              except Exception:
+                  return 'unknown'
+
+          def get_model():
+              try:
+                  return subprocess.check_output(['dmidecode', '-s', 'system-product-name'], text=True).strip()
+              except Exception:
+                  return 'unknown'
+
+          def get_bios_version():
+              try:
+                  return subprocess.check_output(['dmidecode', '-s', 'bios-version'], text=True).strip()
+              except Exception:
+                  return 'unknown'
+
           def get_cpu_generation(cpu_model_str):
               match = re.search(r'i[3579]-(\d{4,5})', cpu_model_str)
               return match.group(1) if match else 'unknown'
 
-          # Metric collection function
+          def get_installed_packages():
+              try:
+                  output = subprocess.check_output(['dpkg', '-l'], text=True)
+                  return [line.split()[1] for line in output.splitlines() if line.startswith('ii')]
+              except Exception:
+                  return []
+
+          def get_cpu_model():
+              try:
+                  with open("/proc/cpuinfo") as f:
+                      for line in f:
+                          if "model name" in line:
+                              return line.split(":")[1].strip()
+              except Exception:
+                  return platform.processor() or "unknown"
+              return "unknown"
+
+          def get_processor_model():
+              try:
+                  with open("/proc/cpuinfo") as f:
+                      for line in f:
+                          if line.strip().startswith("model") and "name" not in line:
+                              return line.split(":")[1].strip()
+              except Exception:
+                  return "unknown"
+              return "unknown"
+
+          # Collector
           def collect():
               ram = psutil.virtual_memory()
               cpu_info = platform.processor()
               cpu_gen = get_cpu_generation(cpu_info)
               os_flavor = distro.name(pretty=True) or platform.platform()
 
-              # Set metrics
+              # Core metrics
               cpu_cores.labels(hostname=hostname).set(psutil.cpu_count(logical=False))
               ram_used.labels(hostname=hostname).set(round(ram.used / 1024 / 1024))
               ram_total.labels(hostname=hostname).set(round(ram.total / 1024 / 1024))
-              cpu_utilization.labels(hostname=hostname).set(psutil.cpu_percent(interval=None))  # 🔹 Added
+              cpu_utilization.labels(hostname=hostname).set(psutil.cpu_percent(interval=None))
 
-              cpu_model.info({'hostname': hostname, 'model': cpu_info})
+              # Info metrics
+              cpu_model.info({'hostname': hostname, 'model': get_cpu_model()})
+              processor_model.info({'hostname': hostname, 'processor_model': get_processor_model()})
               cpu_generation.info({'hostname': hostname, 'generation': cpu_gen})
               os_version.info({'hostname': hostname, 'os': os_flavor})
               kernel_version.info({'hostname': hostname, 'kernel': platform.release()})
               architecture.info({'hostname': hostname, 'architecture': platform.machine()})
               ip_info.info({'hostname': hostname, 'ip': get_ip()})
+              ip_all_info.info({'hostname': hostname, 'ips': ','.join(get_all_ips())})
               mac_info.info({'hostname': hostname, 'mac': get_mac()})
               serial_info.info({'hostname': hostname, 'serial': get_serial_number()})
+              manufacturer_info.info({'hostname': hostname, 'manufacturer': get_manufacturer()})
+              model_info.info({'hostname': hostname, 'model': get_model()})
+              bios_info.info({'hostname': hostname, 'bios': get_bios_version()})
 
               # Disk usage
               for part in psutil.disk_partitions(all=False):
@@ -129,6 +192,11 @@
                       disk_used.labels(hostname=hostname, disk=part.device).set(usage.used)
                   except Exception:
                       continue
+
+              # Extra system info
+              packages_count.labels(hostname=hostname).set(len(get_installed_packages()))
+              users_gauge.labels(hostname=hostname).set(len(psutil.users()))
+              uptime_gauge.labels(hostname=hostname).set(time.time() - psutil.boot_time())
 
           if __name__ == '__main__':
               print(f"📡 Exporter running on http://0.0.0.0:9888/metrics")
