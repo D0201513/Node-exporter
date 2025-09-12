@@ -52,7 +52,9 @@
           # Hostname
           hostname = socket.gethostname()
 
-          # Gauges
+          # ----------------------------
+          # Hardware Gauges
+          # ----------------------------
           cpu_cores = Gauge('asset_cpu_cores', 'CPU core count', ['hostname'])
           ram_total = Gauge('asset_ram_total_mb', 'Total RAM in MB', ['hostname'])
           ram_used = Gauge('asset_ram_used_mb', 'Used RAM in MB', ['hostname'])
@@ -63,7 +65,18 @@
           uptime_gauge = Gauge('asset_uptime_seconds', 'System uptime in seconds', ['hostname'])
           cpu_utilization = Gauge('asset_cpu_utilization_percent', 'CPU utilization percentage', ['hostname'])
 
-          # Info metrics
+          # ----------------------------
+          # Software Inventory
+          # ----------------------------
+          software_info = Gauge(
+              'asset_installed_software_info',
+              'Installed Software Information',
+              ['hostname', 'software_name', 'version', 'installed_date', 'user']
+          )
+
+          # ----------------------------
+          # Info Metrics
+          # ----------------------------
           cpu_model = Info('asset_cpu_model_info', 'CPU model info')
           processor_model = Info('asset_processor_model_info', 'Processor model')
           cpu_generation = Info('asset_cpu_generation_info', 'CPU generation')
@@ -74,11 +87,13 @@
           ip_all_info = Info('asset_all_ip_info', 'All IP addresses')
           mac_info = Info('asset_mac_address_info', 'MAC address')
           serial_info = Info('asset_serial_number_info', 'System serial number')
-          manufacturer_info = Info('asset_manufacturer_info', 'System manufacturer')
+          manufacturer_info = Info('asset_manufacturer_info', 'System manufacturer with manufacture date')
           model_info = Info('asset_model_info', 'System model')
           bios_info = Info('asset_bios_info', 'BIOS version')
 
+          # ----------------------------
           # Helpers
+          # ----------------------------
           def get_ip():
               for iface_name, iface_addrs in psutil.net_if_addrs().items():
                   for addr in iface_addrs:
@@ -97,8 +112,9 @@
           def get_mac():
               for iface_name, iface_addrs in psutil.net_if_addrs().items():
                   for addr in iface_addrs:
-                      if addr.family == psutil.AF_LINK and addr.address != '00:00:00:00:00:00':
-                          return addr.address
+                      if hasattr(psutil, "AF_LINK"):
+                          if addr.family == psutil.AF_LINK and addr.address != '00:00:00:00:00:00':
+                              return addr.address
               return 'unknown'
 
           def get_serial_number():
@@ -125,16 +141,39 @@
               except Exception:
                   return 'unknown'
 
+          def get_manufacture_date():
+              try:
+                  return subprocess.check_output(['dmidecode', '-s', 'bios-release-date'], text=True).strip()
+              except Exception:
+                  return 'unknown'
+
+          def get_installed_software():
+              """Parse /usr/local/bin/installed_packages_history.sh output"""
+              software_list = []
+              try:
+                  output = subprocess.check_output(['/usr/local/bin/installed_packages_history.sh'], text=True)
+                  for line in output.splitlines():
+                      if line.startswith("DATE") or not line.strip():
+                          continue
+                      parts = line.split()
+                      if len(parts) >= 5:
+                          installed_date = f"{parts[0]} {parts[1]}"
+                          pkg_name = parts[2]
+                          version = parts[3]
+                          user = parts[4]
+                          software_list.append({
+                              'name': pkg_name,
+                              'version': version,
+                              'installed_date': installed_date,
+                              'user': user
+                          })
+              except Exception:
+                  pass
+              return software_list
+
           def get_cpu_generation(cpu_model_str):
               match = re.search(r'i[3579]-(\d{4,5})', cpu_model_str)
               return match.group(1) if match else 'unknown'
-
-          def get_installed_packages():
-              try:
-                  output = subprocess.check_output(['dpkg', '-l'], text=True)
-                  return [line.split()[1] for line in output.splitlines() if line.startswith('ii')]
-              except Exception:
-                  return []
 
           def get_cpu_model():
               try:
@@ -156,7 +195,9 @@
                   return "unknown"
               return "unknown"
 
+          # ----------------------------
           # Collector
+          # ----------------------------
           def collect():
               ram = psutil.virtual_memory()
               cpu_info = platform.processor()
@@ -180,7 +221,11 @@
               ip_all_info.info({'hostname': hostname, 'ips': ','.join(get_all_ips())})
               mac_info.info({'hostname': hostname, 'mac': get_mac()})
               serial_info.info({'hostname': hostname, 'serial': get_serial_number()})
-              manufacturer_info.info({'hostname': hostname, 'manufacturer': get_manufacturer()})
+              manufacturer_info.info({
+                  'hostname': hostname,
+                  'manufacturer': get_manufacturer(),
+                  'manufacture_date': get_manufacture_date()
+              })
               model_info.info({'hostname': hostname, 'model': get_model()})
               bios_info.info({'hostname': hostname, 'bios': get_bios_version()})
 
@@ -194,10 +239,24 @@
                       continue
 
               # Extra system info
-              packages_count.labels(hostname=hostname).set(len(get_installed_packages()))
+              software_list = get_installed_software()
+              packages_count.labels(hostname=hostname).set(len(software_list))
               users_gauge.labels(hostname=hostname).set(len(psutil.users()))
               uptime_gauge.labels(hostname=hostname).set(time.time() - psutil.boot_time())
 
+              # Software Inventory Metrics
+              for software in software_list:
+                  software_info.labels(
+                      hostname=hostname,
+                      software_name=software['name'],
+                      version=software['version'],
+                      installed_date=software['installed_date'],
+                      user=software['user']
+                  ).set(1)
+
+          # ----------------------------
+          # Main
+          # ----------------------------
           if __name__ == '__main__':
               print(f"📡 Exporter running on http://0.0.0.0:9888/metrics")
               start_http_server(9888, addr="0.0.0.0")
