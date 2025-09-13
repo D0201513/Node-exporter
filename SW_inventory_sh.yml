@@ -1,0 +1,66 @@
+---
+- name: Deploy Installed Packages History Script
+  hosts: all
+  become: yes
+
+  tasks:
+    - name: Copy installed_packages_history.sh to target
+      copy:
+        content: |
+          #!/bin/bash
+          # Filename: installed_packages_history.sh
+          # Purpose: List all installed packages with date, time, version, and user who installed
+
+          echo "Fetching package install history..."
+
+          # Temporary file to store audit logs
+          tmp_audit="/tmp/pkg_audit.log"
+          > "$tmp_audit"
+
+          # Check if auditd logs exist
+          if command -v ausearch >/dev/null 2>&1; then
+              # Get user info from audit logs for apt/dpkg commands
+              ausearch -x apt-get --success yes 2>/dev/null | awk -F 'auid=' '{print $2}' | awk '{print $1}' > "$tmp_audit"
+              ausearch -x dpkg --success yes 2>/dev/null | awk -F 'auid=' '{print $2}' | awk '{print $1}' >> "$tmp_audit"
+          fi
+
+          echo -e "DATE\tTIME\tPACKAGE\tVERSION\tUSER"
+
+          # Loop through dpkg logs
+          for log in /var/log/dpkg.log*; do
+              zcat_if_needed="$log"
+              # Check if log is compressed
+              if [[ "$log" == *.gz ]]; then
+                  zcat_if_needed="zcat $log"
+              else
+                  zcat_if_needed="cat $log"
+              fi
+
+              # Extract install events
+              eval "$zcat_if_needed" | grep " install " | while read -r line; do
+                  # Format: 2025-09-11 16:18:00 install package:arch oldver newver
+                  date_time=$(echo "$line" | awk '{print $1, $2}')
+                  package=$(echo "$line" | awk '{print $4}' | cut -d':' -f1)
+                  version=$(echo "$line" | awk '{print $5}')
+                  # Try to match user from audit logs (may not always be available)
+                  user=$(grep -m1 "$package" "$tmp_audit" 2>/dev/null)
+                  user=${user:-unknown}
+
+                  echo -e "$date_time\t$package\t$version\t$user"
+              done
+          done
+
+          # Cleanup
+          rm -f "$tmp_audit"
+        dest: /usr/local/bin/installed_packages_history.sh
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Verify script is executable
+      command: ls -l /usr/local/bin/installed_packages_history.sh
+      register: script_status
+
+    - name: Show script status
+      debug:
+        var: script_status.stdout
