@@ -1,6 +1,6 @@
 ---
 - name: Deploy Installed Packages History Script
-  hosts: Melur
+  hosts: linux_servers
   become: yes
 
   tasks:
