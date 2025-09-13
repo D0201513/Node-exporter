@@ -1,6 +1,6 @@
 ---
 - name: Deploy Installed Packages History Script
-  hosts: all
+  hosts: Tirumangalam
   become: yes
 
   tasks:
