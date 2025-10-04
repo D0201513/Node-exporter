@@ -1,6 +1,6 @@
 ---
 - name: Centralized Security Scan Collection
-  hosts: linux_servers
+  hosts: 172.17.9.59
   become: yes
   vars:
     collector_log_dir: /var/log/security_scan_collector
