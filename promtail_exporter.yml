@@ -1,6 +1,6 @@
 ---
 - name: Centralized Security Scan Collection
-  hosts: linux_clients   # Replace with your group or IPs
+  hosts: 172.17.9.59   # Replace with your group or IPs
   become: yes
   vars:
     collector_log_dir: /var/log/security_scan_collector
