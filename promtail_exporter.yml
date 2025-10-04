@@ -54,6 +54,7 @@
             grep -i "minlen" /etc/security/pwquality.conf >> $LOGFILE || echo "minlen not set" >> $LOGFILE
           else
             echo "pwquality.conf not found" >> $LOGFILE
+          fi
 
     # Step 2: Run script on client
     - name: Execute security scan on client
