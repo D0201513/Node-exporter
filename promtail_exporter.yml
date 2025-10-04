@@ -1,17 +1,15 @@
 ---
 - name: Centralized Security Scan Collection
-  hosts: 172.17.9.59   # Replace with your group or IPs
+  hosts: 172.17.9.59   # Replace with group or IPs
   become: yes
   vars:
-    collector_log_dir: ~/security_scan_collector  # Absolute path on control node
+    collector_log_dir: /home/mduroot/security_scan_collector  # Absolute path on control node
     scan_script_path: /usr/local/bin/security_scan.sh
     client_log_path: /tmp/security_scan.log
 
   tasks:
 
-    # ---------------------------
-    # Step 1: Deploy the security scan script to client
-    # ---------------------------
+    # Step 1: Deploy the script
     - name: Deploy security_scan.sh script to client
       copy:
         dest: "{{ scan_script_path }}"
@@ -20,61 +18,54 @@
           #!/bin/bash
           LOGFILE="{{ client_log_path }}"
           echo "===== Security Scan: $(date) =====" > $LOGFILE
-
           OS_FAMILY=$(awk -F= '/^ID=/{print $2}' /etc/os-release | tr -d '"')
 
-          # 1. Missing OS Security Updates
           echo "[MISSING_OS_UPDATES]" >> $LOGFILE
           if [[ "$OS_FAMILY" =~ (ubuntu|debian) ]]; then
-            apt list --upgradable 2>/dev/null | grep -i security >> $LOGFILE || echo "No security updates"
+            apt list --upgradable 2>/dev/null | grep -i security >> $LOGFILE || echo "No security updates" >> $LOGFILE
           elif [[ "$OS_FAMILY" =~ (rhel|centos|rocky|almalinux) ]]; then
-            yum check-update 2>/dev/null | grep -i security >> $LOGFILE || echo "No security updates"
+            yum check-update 2>/dev/null | grep -i security >> $LOGFILE || echo "No security updates" >> $LOGFILE
           fi
 
-          # 2. Outdated Packages
           echo "[OUTDATED_PACKAGES]" >> $LOGFILE
           if [[ "$OS_FAMILY" =~ (ubuntu|debian) ]]; then
-            apt list --upgradable 2>/dev/null >> $LOGFILE || echo "No outdated packages"
+            apt list --upgradable 2>/dev/null >> $LOGFILE || echo "No outdated packages" >> $LOGFILE
           else
-            yum check-update 2>/dev/null >> $LOGFILE || echo "No outdated packages"
+            yum check-update 2>/dev/null >> $LOGFILE || echo "No outdated packages" >> $LOGFILE
           fi
 
-          # 3. Kernel Vulnerabilities
           echo "[KERNEL]" >> $LOGFILE
           uname -r >> $LOGFILE
           if [[ "$OS_FAMILY" =~ (ubuntu|debian) ]]; then
-            apt list --upgradable 2>/dev/null | grep linux-image >> $LOGFILE || echo "No kernel updates"
+            apt list --upgradable 2>/dev/null | grep linux-image >> $LOGFILE || echo "No kernel updates" >> $LOGFILE
           else
-            yum check-update 2>/dev/null | grep kernel >> $LOGFILE || echo "No kernel updates"
+            yum check-update 2>/dev/null | grep kernel >> $LOGFILE || echo "No kernel updates" >> $LOGFILE
           fi
 
-          # 4. Vulnerable Versions of Apps
           echo "[VULNERABLE_APPS]" >> $LOGFILE
           if command -v dpkg &>/dev/null; then
-            dpkg -l | egrep "apache2|nginx|mysql|php" >> $LOGFILE || echo "No vulnerable apps found"
+            dpkg -l | egrep "apache2|nginx|mysql|php" >> $LOGFILE || echo "No vulnerable apps found" >> $LOGFILE
           elif command -v rpm &>/dev/null; then
-            rpm -qa | egrep "httpd|nginx|mysql|php" >> $LOGFILE || echo "No vulnerable apps found"
+            rpm -qa | egrep "httpd|nginx|mysql|php" >> $LOGFILE || echo "No vulnerable apps found" >> $LOGFILE
           fi
 
-          # 5. Weak Security Settings
           echo "[WEAK_SETTINGS]" >> $LOGFILE
           if [[ -f /etc/security/pwquality.conf ]]; then
-            grep -i "minlen" /etc/security/pwquality.conf || echo "minlen not set"
+            grep -i "minlen" /etc/security/pwquality.conf >> $LOGFILE || echo "minlen not set" >> $LOGFILE
           else
-            echo "pwquality.conf not found"
-          fi
+            echo "pwquality.conf not found" >> $LOGFILE
 
-    # ---------------------------
-    # Step 2: Run the security scan on client
-    # ---------------------------
+    # Step 2: Run script on client
     - name: Execute security scan on client
       shell: "{{ scan_script_path }}"
-      register: scan_output
-      ignore_errors: yes
+      register: scan_result
+      ignore_errors: no
 
-    # ---------------------------
-    # Step 3: Ensure collector directory exists on Ansible control node
-    # ---------------------------
+    - name: Debug client scan execution
+      debug:
+        var: scan_result
+
+    # Step 3: Ensure collector dir on control node
     - name: Ensure collector log directory exists on control node
       delegate_to: localhost
       become: no
@@ -83,18 +74,14 @@
         state: directory
         mode: '0755'
 
-    # ---------------------------
-    # Step 4: Copy scan output to collector node
-    # ---------------------------
-    - name: Copy client scan output to collector node
+    # Step 4: Fetch logs from client
+    - name: Fetch scan output from client
       fetch:
         src: "{{ client_log_path }}"
         dest: "{{ collector_log_dir }}/security_scan_{{ inventory_hostname }}.log"
         flat: yes
 
-    # ---------------------------
-    # Step 5: Clean up temporary log on client
-    # ---------------------------
+    # Step 5: Cleanup client log
     - name: Remove temp log on client
       file:
         path: "{{ client_log_path }}"
