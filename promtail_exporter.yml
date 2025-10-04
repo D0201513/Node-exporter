@@ -1,50 +1,74 @@
 ---
 - name: Centralized Security Scan Collection
-  hosts: 172.17.9.59
+  hosts: linux_clients   # Replace with your group or IPs
   become: yes
   vars:
     collector_log_dir: /var/log/security_scan_collector
+    scan_script_path: /usr/local/bin/security_scan.sh
+    client_log_path: /tmp/security_scan.log
 
   tasks:
 
     # ---------------------------
-    # Step 1: Create the security scan script on client
+    # Step 1: Deploy the security scan script to client
     # ---------------------------
     - name: Deploy security_scan.sh script to client
       copy:
-        dest: /usr/local/bin/security_scan.sh
+        dest: "{{ scan_script_path }}"
         mode: '0755'
         content: |
           #!/bin/bash
-          LOGFILE="/tmp/security_scan.log"
+          LOGFILE="{{ client_log_path }}"
           echo "===== Security Scan: $(date) =====" > $LOGFILE
+
+          OS_FAMILY=$(awk -F= '/^ID=/{print $2}' /etc/os-release | tr -d '"')
 
           # 1. Missing OS Security Updates
           echo "[MISSING_OS_UPDATES]" >> $LOGFILE
-          apt list --upgradable 2>/dev/null | grep -i security >> $LOGFILE || echo "No security updates"
+          if [[ "$OS_FAMILY" =~ (ubuntu|debian) ]]; then
+            apt list --upgradable 2>/dev/null | grep -i security >> $LOGFILE || echo "No security updates"
+          elif [[ "$OS_FAMILY" =~ (rhel|centos|rocky|almalinux) ]]; then
+            yum check-update 2>/dev/null | grep -i security >> $LOGFILE || echo "No security updates"
+          fi
 
           # 2. Outdated Packages
           echo "[OUTDATED_PACKAGES]" >> $LOGFILE
-          apt list --upgradable 2>/dev/null >> $LOGFILE || echo "No outdated packages"
+          if [[ "$OS_FAMILY" =~ (ubuntu|debian) ]]; then
+            apt list --upgradable 2>/dev/null >> $LOGFILE || echo "No outdated packages"
+          else
+            yum check-update 2>/dev/null >> $LOGFILE || echo "No outdated packages"
+          fi
 
           # 3. Kernel Vulnerabilities
           echo "[KERNEL]" >> $LOGFILE
           uname -r >> $LOGFILE
-          apt list --upgradable 2>/dev/null | grep linux-image >> $LOGFILE || echo "No kernel updates"
+          if [[ "$OS_FAMILY" =~ (ubuntu|debian) ]]; then
+            apt list --upgradable 2>/dev/null | grep linux-image >> $LOGFILE || echo "No kernel updates"
+          else
+            yum check-update 2>/dev/null | grep kernel >> $LOGFILE || echo "No kernel updates"
+          fi
 
           # 4. Vulnerable Versions of Apps
           echo "[VULNERABLE_APPS]" >> $LOGFILE
-          dpkg -l | egrep "apache2|nginx|mysql|php" >> $LOGFILE || echo "No vulnerable apps found"
+          if command -v dpkg &>/dev/null; then
+            dpkg -l | egrep "apache2|nginx|mysql|php" >> $LOGFILE || echo "No vulnerable apps found"
+          elif command -v rpm &>/dev/null; then
+            rpm -qa | egrep "httpd|nginx|mysql|php" >> $LOGFILE || echo "No vulnerable apps found"
+          fi
 
           # 5. Weak Security Settings
           echo "[WEAK_SETTINGS]" >> $LOGFILE
-          grep -i "minlen" /etc/security/pwquality.conf || echo "minlen not set"
+          if [[ -f /etc/security/pwquality.conf ]]; then
+            grep -i "minlen" /etc/security/pwquality.conf || echo "minlen not set"
+          else
+            echo "pwquality.conf not found"
+          fi
 
     # ---------------------------
     # Step 2: Run the security scan on client
     # ---------------------------
     - name: Execute security scan on client
-      shell: /usr/local/bin/security_scan.sh
+      shell: "{{ scan_script_path }}"
       register: scan_output
       ignore_errors: yes
 
@@ -52,25 +76,25 @@
     # Step 3: Ensure collector directory exists on Ansible control node
     # ---------------------------
     - name: Ensure collector log directory exists on control node
-      local_action:
-        module: file
+      delegate_to: localhost
+      file:
         path: "{{ collector_log_dir }}"
         state: directory
         mode: '0755'
 
     # ---------------------------
-    # Step 4: Copy scan output to collector
+    # Step 4: Copy scan output to collector node
     # ---------------------------
     - name: Copy client scan output to collector node
       fetch:
-        src: /tmp/security_scan.log
+        src: "{{ client_log_path }}"
         dest: "{{ collector_log_dir }}/security_scan_{{ inventory_hostname }}.log"
         flat: yes
 
     # ---------------------------
-    # Optional Step 5: Clean up temp log on client
+    # Step 5: Clean up temporary log on client
     # ---------------------------
     - name: Remove temp log on client
       file:
-        path: /tmp/security_scan.log
+        path: "{{ client_log_path }}"
         state: absent
