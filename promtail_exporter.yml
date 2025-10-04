@@ -77,7 +77,7 @@
     # ---------------------------
     - name: Ensure collector log directory exists on control node
       delegate_to: localhost
-      become: no
+      become: yes
       file:
         path: "{{ collector_log_dir }}"
         state: directory
