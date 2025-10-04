@@ -3,7 +3,7 @@
   hosts: Test1   # Replace with group or IPs
   become: yes
   vars:
-    collector_log_dir: /home/mduroot/security_scan_collector  # Absolute path on control node
+    collector_log_dir: ~/security_scan_collector  # Absolute path on control node
     scan_script_path: /usr/local/bin/security_scan.sh
     client_log_path: /tmp/security_scan.log
 
