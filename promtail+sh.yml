@@ -1,0 +1,152 @@
+---
+- name: Deploy Security Scan & Promtail on Clients
+  hosts: Test1
+  become: yes
+  vars:
+    promtail_version: "2.9.2"  # adjust to your Loki/Promtail version
+    promtail_bin_path: /usr/local/bin/promtail
+    promtail_config_path: /etc/promtail/config.yml
+    promtail_service_path: /etc/systemd/system/promtail.service
+    scan_script_path: /usr/local/bin/security_scan.sh
+    client_log_path: /tmp/security_scan.log
+    loki_url: "http://<LOKI_SERVER_IP>:3100/loki/api/v1/push"  # replace with your Loki server
+    promtail_positions: /var/log/promtail-positions.yaml
+
+  tasks:
+
+    # Step 1: Download Promtail binary
+    - name: Download Promtail
+      get_url:
+        url: "https://github.com/grafana/loki/releases/download/v{{ promtail_version }}/promtail-linux-amd64.zip"
+        dest: "/tmp/promtail-linux-amd64.zip"
+        mode: '0644'
+
+    # Step 2: Unzip Promtail binary
+    - name: Unzip Promtail
+      unarchive:
+        src: "/tmp/promtail-linux-amd64.zip"
+        dest: "/tmp/"
+        remote_src: yes
+        creates: "/tmp/promtail-linux-amd64"
+
+    # Step 3: Move Promtail binary to /usr/local/bin
+    - name: Install Promtail binary
+      copy:
+        src: "/tmp/promtail-linux-amd64"
+        dest: "{{ promtail_bin_path }}"
+        mode: '0755'
+
+    # Step 4: Create Promtail config directory
+    - name: Ensure /etc directory exists
+      file:
+        path: /etc
+        state: directory
+        mode: '0755'
+
+    # Step 5: Create Promtail configuration file
+    - name: Deploy Promtail configuration
+      copy:
+        dest: "{{ promtail_config_path }}"
+        content: |
+          server:
+            http_listen_port: 9080
+            grpc_listen_port: 0
+
+          positions:
+            filename: {{ promtail_positions }}
+
+          clients:
+            - url: {{ loki_url }}
+
+          scrape_configs:
+            - job_name: security_scan_logs
+              static_configs:
+                - targets:
+                    - localhost
+                  labels:
+                    job: security_scan
+                    host: "{{ inventory_hostname }}"
+                    __path__: {{ client_log_path }}
+        mode: '0644'
+
+    # Step 6: Create Promtail systemd service
+    - name: Create Promtail systemd service
+      copy:
+        dest: "{{ promtail_service_path }}"
+        content: |
+          [Unit]
+          Description=Promtail service
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart={{ promtail_bin_path }} -config.file={{ promtail_config_path }}
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: '0644'
+
+    # Step 7: Reload systemd and enable Promtail
+    - name: Reload systemd and start Promtail
+      systemd:
+        daemon_reload: yes
+        name: promtail
+        enabled: yes
+        state: started
+
+    # Step 8: Deploy security scan script to client
+    - name: Deploy security_scan.sh script
+      copy:
+        dest: "{{ scan_script_path }}"
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          LOGFILE="{{ client_log_path }}"
+          echo "===== Security Scan: $(date) =====" > $LOGFILE
+          OS_FAMILY=$(awk -F= '/^ID=/{print $2}' /etc/os-release | tr -d '"')
+
+          echo "[MISSING_OS_UPDATES]" >> $LOGFILE
+          if [[ "$OS_FAMILY" =~ (ubuntu|debian) ]]; then
+            apt list --upgradable 2>/dev/null | grep -i security >> $LOGFILE || echo "No security updates" >> $LOGFILE
+          elif [[ "$OS_FAMILY" =~ (rhel|centos|rocky|almalinux) ]]; then
+            yum check-update 2>/dev/null | grep -i security >> $LOGFILE || echo "No security updates" >> $LOGFILE
+          fi
+
+          echo "[OUTDATED_PACKAGES]" >> $LOGFILE
+          if [[ "$OS_FAMILY" =~ (ubuntu|debian) ]]; then
+            apt list --upgradable 2>/dev/null >> $LOGFILE || echo "No outdated packages" >> $LOGFILE
+          else
+            yum check-update 2>/dev/null >> $LOGFILE || echo "No outdated packages" >> $LOGFILE
+          fi
+
+          echo "[KERNEL]" >> $LOGFILE
+          uname -r >> $LOGFILE
+          if [[ "$OS_FAMILY" =~ (ubuntu|debian) ]]; then
+            apt list --upgradable 2>/dev/null | grep linux-image >> $LOGFILE || echo "No kernel updates" >> $LOGFILE
+          else
+            yum check-update 2>/dev/null | grep kernel >> $LOGFILE || echo "No kernel updates" >> $LOGFILE
+          fi
+
+          echo "[VULNERABLE_APPS]" >> $LOGFILE
+          if command -v dpkg &>/dev/null; then
+            dpkg -l | egrep "apache2|nginx|mysql|php" >> $LOGFILE || echo "No vulnerable apps found" >> $LOGFILE
+          elif command -v rpm &>/dev/null; then
+            rpm -qa | egrep "httpd|nginx|mysql|php" >> $LOGFILE || echo "No vulnerable apps found" >> $LOGFILE
+          fi
+
+          echo "[WEAK_SETTINGS]" >> $LOGFILE
+          if [[ -f /etc/security/pwquality.conf ]]; then
+            grep -i "minlen" /etc/security/pwquality.conf >> $LOGFILE || echo "minlen not set" >> $LOGFILE
+          else
+            echo "pwquality.conf not found" >> $LOGFILE
+          fi
+
+    # Step 9: Execute the security scan once
+    - name: Run security_scan.sh script
+      shell: "{{ scan_script_path }}"
+      register: scan_result
+
+    - name: Debug scan result
+      debug:
+        var: scan_result
