@@ -6,7 +6,7 @@
     promtail_version: "2.9.2"                     # Promtail version
     promtail_bin_dir: /usr/local/bin
     promtail_config_path: /etc/promtail-config.yml
-    loki_url: "http://172.17.9.132:3100/loki/api/v1/push"  # Replace with your Loki URL
+    loki_url: "http://172.17.9.132:31001/loki/api/v1/push"  # Replace with your Loki URL
     scan_script_path: /usr/local/bin/security_scan.sh
     client_log_path: /tmp/security_scan.log
 
