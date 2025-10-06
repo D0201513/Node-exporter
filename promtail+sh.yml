@@ -1,62 +1,52 @@
 ---
-- name: Deploy Security Scan & Promtail on Clients
-  hosts: Test1
+- name: Deploy Promtail and Security Scan on Clients
+  hosts: Test1   # Replace with your client host group
   become: yes
   vars:
-    promtail_version: "2.9.2"  # adjust to your Loki/Promtail version
-    promtail_bin_path: /usr/local/bin/promtail
-    promtail_config_path: /etc/promtail/config.yml
-    promtail_service_path: /etc/systemd/system/promtail.service
+    promtail_version: "2.9.2"                     # Promtail version
+    promtail_bin_dir: /usr/local/bin
+    promtail_config_path: /etc/promtail-config.yml
+    loki_url: "http://<loki-server-ip>:3100/loki/api/v1/push"  # Replace with your reachable Loki URL
     scan_script_path: /usr/local/bin/security_scan.sh
     client_log_path: /tmp/security_scan.log
-    loki_url: "http://<LOKI_SERVER_IP>:3100/loki/api/v1/push"  # replace with your Loki server
-    promtail_positions: /var/log/promtail-positions.yaml
 
   tasks:
-
-    # Step 1: Download Promtail binary
-    - name: Download Promtail
+    # Step 1: Download Promtail
+    - name: Download Promtail binary
       get_url:
         url: "https://github.com/grafana/loki/releases/download/v{{ promtail_version }}/promtail-linux-amd64.zip"
         dest: "/tmp/promtail-linux-amd64.zip"
         mode: '0644'
 
-    # Step 2: Unzip Promtail binary
+    # Step 2: Unzip Promtail
     - name: Unzip Promtail
       unarchive:
         src: "/tmp/promtail-linux-amd64.zip"
         dest: "/tmp/"
         remote_src: yes
-        creates: "/tmp/promtail-linux-amd64"
 
-    # Step 3: Move Promtail binary to /usr/local/bin
+    # Step 3: Move Promtail binary
     - name: Install Promtail binary
       copy:
         src: "/tmp/promtail-linux-amd64"
-        dest: "{{ promtail_bin_path }}"
+        dest: "{{ promtail_bin_dir }}/promtail"
         mode: '0755'
 
-    # Step 4: Create Promtail config directory
-    - name: Ensure /etc directory exists
-      file:
-        path: /etc
-        state: directory
-        mode: '0755'
-
-    # Step 5: Create Promtail configuration file
-    - name: Deploy Promtail configuration
+    # Step 4: Create Promtail configuration
+    - name: Create Promtail config file
       copy:
         dest: "{{ promtail_config_path }}"
+        mode: '0644'
         content: |
           server:
             http_listen_port: 9080
             grpc_listen_port: 0
 
           positions:
-            filename: {{ promtail_positions }}
+            filename: /tmp/positions.yaml
 
           clients:
-            - url: {{ loki_url }}
+            - url: "{{ loki_url }}"
 
           scrape_configs:
             - job_name: security_scan_logs
@@ -65,37 +55,9 @@
                     - localhost
                   labels:
                     job: security_scan
-                    host: "{{ inventory_hostname }}"
-                    __path__: {{ client_log_path }}
-        mode: '0644'
+                    __path__: "{{ client_log_path }}"
 
-    # Step 6: Create Promtail systemd service
-    - name: Create Promtail systemd service
-      copy:
-        dest: "{{ promtail_service_path }}"
-        content: |
-          [Unit]
-          Description=Promtail service
-          After=network.target
-
-          [Service]
-          Type=simple
-          ExecStart={{ promtail_bin_path }} -config.file={{ promtail_config_path }}
-          Restart=always
-
-          [Install]
-          WantedBy=multi-user.target
-        mode: '0644'
-
-    # Step 7: Reload systemd and enable Promtail
-    - name: Reload systemd and start Promtail
-      systemd:
-        daemon_reload: yes
-        name: promtail
-        enabled: yes
-        state: started
-
-    # Step 8: Deploy security scan script to client
+    # Step 5: Deploy security scan script
     - name: Deploy security_scan.sh script
       copy:
         dest: "{{ scan_script_path }}"
@@ -122,11 +84,6 @@
 
           echo "[KERNEL]" >> $LOGFILE
           uname -r >> $LOGFILE
-          if [[ "$OS_FAMILY" =~ (ubuntu|debian) ]]; then
-            apt list --upgradable 2>/dev/null | grep linux-image >> $LOGFILE || echo "No kernel updates" >> $LOGFILE
-          else
-            yum check-update 2>/dev/null | grep kernel >> $LOGFILE || echo "No kernel updates" >> $LOGFILE
-          fi
 
           echo "[VULNERABLE_APPS]" >> $LOGFILE
           if command -v dpkg &>/dev/null; then
@@ -142,11 +99,17 @@
             echo "pwquality.conf not found" >> $LOGFILE
           fi
 
-    # Step 9: Execute the security scan once
-    - name: Run security_scan.sh script
+    # Step 6: Run the security scan
+    - name: Execute security scan
       shell: "{{ scan_script_path }}"
       register: scan_result
 
-    - name: Debug scan result
+    - name: Show scan output path
       debug:
-        var: scan_result
+        msg: "Security scan log generated at {{ client_log_path }}"
+
+    # Step 7: Start Promtail as background process
+    - name: Start Promtail
+      shell: "nohup {{ promtail_bin_dir }}/promtail -config.file={{ promtail_config_path }} > /tmp/promtail.log 2>&1 &"
+      args:
+        executable: /bin/bash
