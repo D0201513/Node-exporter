@@ -3,7 +3,7 @@
   hosts: Test1   # Replace with your host group or IPs
   become: yes
   vars:
-    collector_log_dir: /var/log/security_scan_collector  # Absolute path on control node
+    collector_log_dir: ~/security_scan_collector  # Absolute path on control node
     scan_script_path: /usr/local/bin/security_scan.sh
     client_log_path: /tmp/security_scan.log
 
@@ -12,7 +12,7 @@
     # Step 0: Ensure collector log directory exists on control node
     - name: Ensure collector log directory exists on control node
       delegate_to: localhost
-      become: no
+      become: yes
       file:
         path: "{{ collector_log_dir }}"
         state: directory
