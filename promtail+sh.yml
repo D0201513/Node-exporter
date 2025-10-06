@@ -1,12 +1,12 @@
 ---
 - name: Deploy Promtail and Security Scan on Clients
-  hosts: Test1   # Replace with your client host group
+  hosts: Test1
   become: yes
   vars:
     promtail_version: "2.9.2"                     # Promtail version
     promtail_bin_dir: /usr/local/bin
     promtail_config_path: /etc/promtail-config.yml
-    loki_url: "http://<loki-server-ip>:3100/loki/api/v1/push"  # Replace with your reachable Loki URL
+    loki_url: "http://172.17.9.132:3100/loki/api/v1/push"  # Replace with your Loki URL
     scan_script_path: /usr/local/bin/security_scan.sh
     client_log_path: /tmp/security_scan.log
 
@@ -25,12 +25,13 @@
         dest: "/tmp/"
         remote_src: yes
 
-    # Step 3: Move Promtail binary
+    # Step 3: Move Promtail binary and make executable
     - name: Install Promtail binary
       copy:
         src: "/tmp/promtail-linux-amd64"
         dest: "{{ promtail_bin_dir }}/promtail"
         mode: '0755'
+        remote_src: yes
 
     # Step 4: Create Promtail configuration
     - name: Create Promtail config file
