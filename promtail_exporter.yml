@@ -1,15 +1,24 @@
 ---
 - name: Centralized Security Scan Collection
-  hosts: Test1   # Replace with group or IPs
+  hosts: Test1   # Replace with your host group or IPs
   become: yes
   vars:
-    collector_log_dir: ~/security_scan_collector  # Absolute path on control node
+    collector_log_dir: /var/log/security_scan_collector  # Absolute path on control node
     scan_script_path: /usr/local/bin/security_scan.sh
     client_log_path: /tmp/security_scan.log
 
   tasks:
 
-    # Step 1: Deploy the script
+    # Step 0: Ensure collector log directory exists on control node
+    - name: Ensure collector log directory exists on control node
+      delegate_to: localhost
+      become: no
+      file:
+        path: "{{ collector_log_dir }}"
+        state: directory
+        mode: '0755'
+
+    # Step 1: Deploy the script to client
     - name: Deploy security_scan.sh script to client
       copy:
         dest: "{{ scan_script_path }}"
@@ -56,7 +65,7 @@
             echo "pwquality.conf not found" >> $LOGFILE
           fi
 
-    # Step 2: Run script on client
+    # Step 2: Run the script on the client
     - name: Execute security scan on client
       shell: "{{ scan_script_path }}"
       register: scan_result
@@ -66,23 +75,14 @@
       debug:
         var: scan_result
 
-    # Step 3: Ensure collector dir on control node
-    - name: Ensure collector log directory exists on control node
-      delegate_to: localhost
-      become: no
-      file:
-        path: "{{ collector_log_dir }}"
-        state: directory
-        mode: '0755'
-
-    # Step 4: Fetch logs from client
+    # Step 3: Fetch the log from the client to control node
     - name: Fetch scan output from client
       fetch:
         src: "{{ client_log_path }}"
         dest: "{{ collector_log_dir }}/security_scan_{{ inventory_hostname }}.log"
         flat: yes
 
-    # Step 5: Cleanup client log
+    # Step 4: Cleanup temporary log on client
     - name: Remove temp log on client
       file:
         path: "{{ client_log_path }}"
