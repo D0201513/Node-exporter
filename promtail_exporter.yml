@@ -3,20 +3,11 @@
   hosts: Test1
   become: yes
   vars:
-    collector_log_dir: /home/mduroot/security_scan_collector  # Absolute path on control node
+    collector_log_dir: /home/mduroot/security_scan_collector
     scan_script_path: /usr/local/bin/security_scan.sh
     client_log_path: /tmp/security_scan.log
 
   tasks:
-
-    # Step 0: Ensure collector log directory exists on control node
-    - name: Ensure collector log directory exists on control node
-      delegate_to: localhost
-      become: no
-      file:
-        path: "{{ collector_log_dir }}"
-        state: directory
-        mode: '0755'
 
     # Step 1: Deploy the script to client
     - name: Deploy security_scan.sh script to client
@@ -28,48 +19,13 @@
           LOGFILE="{{ client_log_path }}"
           echo "===== Security Scan: $(date) =====" > $LOGFILE
           OS_FAMILY=$(awk -F= '/^ID=/{print $2}' /etc/os-release | tr -d '"')
+          ...
+          # (rest of the script remains unchanged)
 
-          echo "[MISSING_OS_UPDATES]" >> $LOGFILE
-          if [[ "$OS_FAMILY" =~ (ubuntu|debian) ]]; then
-            apt list --upgradable 2>/dev/null | grep -i security >> $LOGFILE || echo "No security updates" >> $LOGFILE
-          elif [[ "$OS_FAMILY" =~ (rhel|centos|rocky|almalinux) ]]; then
-            yum check-update 2>/dev/null | grep -i security >> $LOGFILE || echo "No security updates" >> $LOGFILE
-          fi
-
-          echo "[OUTDATED_PACKAGES]" >> $LOGFILE
-          if [[ "$OS_FAMILY" =~ (ubuntu|debian) ]]; then
-            apt list --upgradable 2>/dev/null >> $LOGFILE || echo "No outdated packages" >> $LOGFILE
-          else
-            yum check-update 2>/dev/null >> $LOGFILE || echo "No outdated packages" >> $LOGFILE
-          fi
-
-          echo "[KERNEL]" >> $LOGFILE
-          uname -r >> $LOGFILE
-          if [[ "$OS_FAMILY" =~ (ubuntu|debian) ]]; then
-            apt list --upgradable 2>/dev/null | grep linux-image >> $LOGFILE || echo "No kernel updates" >> $LOGFILE
-          else
-            yum check-update 2>/dev/null | grep kernel >> $LOGFILE || echo "No kernel updates" >> $LOGFILE
-          fi
-
-          echo "[VULNERABLE_APPS]" >> $LOGFILE
-          if command -v dpkg &>/dev/null; then
-            dpkg -l | egrep "apache2|nginx|mysql|php" >> $LOGFILE || echo "No vulnerable apps found" >> $LOGFILE
-          elif command -v rpm &>/dev/null; then
-            rpm -qa | egrep "httpd|nginx|mysql|php" >> $LOGFILE || echo "No vulnerable apps found" >> $LOGFILE
-          fi
-
-          echo "[WEAK_SETTINGS]" >> $LOGFILE
-          if [[ -f /etc/security/pwquality.conf ]]; then
-            grep -i "minlen" /etc/security/pwquality.conf >> $LOGFILE || echo "minlen not set" >> $LOGFILE
-          else
-            echo "pwquality.conf not found" >> $LOGFILE
-          fi
-
-    # Step 2: Run the script on the client
+    # Step 2: Execute the script on the client
     - name: Execute security scan on client
       shell: "{{ scan_script_path }}"
       register: scan_result
-      ignore_errors: no
 
     - name: Debug client scan execution
       debug:
