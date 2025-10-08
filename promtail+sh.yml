@@ -56,6 +56,7 @@
                     - localhost
                   labels:
                     job: security_scan
+                    hostname: ${Hostname}
                     __path__: "{{ client_log_path }}"
 
     # Step 5: Deploy security scan script
