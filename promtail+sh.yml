@@ -1,6 +1,6 @@
 ---
 - name: Deploy Promtail and Security Scan on Clients
-  hosts: Test1
+  hosts: 172.17.9.59                  # Replace with your target group
   become: yes
   vars:
     promtail_version: "2.9.2"                     # Promtail version
@@ -8,24 +8,30 @@
     promtail_config_path: /etc/promtail-config.yml
     loki_url: "http://172.17.9.132:31001/loki/api/v1/push"  # Replace with your Loki URL
     scan_script_path: /usr/local/bin/security_scan.sh
-    client_log_path: /tmp/security_scan.log
+    client_log_path: /var/log/security_scan_collector/security_scan.log
 
   tasks:
+    # -----------------------------
     # Step 1: Download Promtail
+    # -----------------------------
     - name: Download Promtail binary
       get_url:
         url: "https://github.com/grafana/loki/releases/download/v{{ promtail_version }}/promtail-linux-amd64.zip"
         dest: "/tmp/promtail-linux-amd64.zip"
         mode: '0644'
 
+    # -----------------------------
     # Step 2: Unzip Promtail
+    # -----------------------------
     - name: Unzip Promtail
       unarchive:
         src: "/tmp/promtail-linux-amd64.zip"
         dest: "/tmp/"
         remote_src: yes
 
+    # -----------------------------
     # Step 3: Move Promtail binary and make executable
+    # -----------------------------
     - name: Install Promtail binary
       copy:
         src: "/tmp/promtail-linux-amd64"
@@ -33,7 +39,9 @@
         mode: '0755'
         remote_src: yes
 
-    # Step 4: Create Promtail configuration
+    # -----------------------------
+    # Step 4: Create Promtail config
+    # -----------------------------
     - name: Create Promtail config file
       copy:
         dest: "{{ promtail_config_path }}"
@@ -50,7 +58,7 @@
             - url: "{{ loki_url }}"
 
           scrape_configs:
-            - job_name: security_scan_logs
+            - job_name: security_scan
               static_configs:
                 - targets:
                     - localhost
@@ -59,7 +67,19 @@
                     hostname: "{{ inventory_hostname }}"
                     __path__: "{{ client_log_path }}"
 
-    # Step 5: Deploy security scan script
+              pipeline_stages:
+                - regex:
+                    expression: '^(?P<timestamp>\S+ \S+) hostname=(?P<hostname>\S+) ip=(?P<ip>\S+) Missing_OS_Updates="(?P<missing>[^"]*)" Outdated_Packages="(?P<outdated>[^"]*)" Weak_Settings="(?P<weak>[^"]*)" Kernel="(?P<kernel>[^"]*)" Vulnerable_Apps="(?P<vuln>[^"]*)"'
+                - labels:
+                    hostname:
+                    ip:
+                - timestamp:
+                    source: timestamp
+                    format: "2006-01-02 15:04:05"
+
+    # -----------------------------
+    # Step 5: Deploy security_scan.sh script
+    # -----------------------------
     - name: Deploy security_scan.sh script
       copy:
         dest: "{{ scan_script_path }}"
@@ -67,41 +87,56 @@
         content: |
           #!/bin/bash
           LOGFILE="{{ client_log_path }}"
-          echo "===== Security Scan: $(date) =====" > $LOGFILE
+
+          # Create log directory if missing
+          mkdir -p "$(dirname "$LOGFILE")"
+
+          # Collect system info
+          HOSTNAME=$(hostname)
+          IP=$(hostname -I | awk '{print $1}')
+          TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
           OS_FAMILY=$(awk -F= '/^ID=/{print $2}' /etc/os-release | tr -d '"')
 
-          echo "[MISSING_OS_UPDATES]" >> $LOGFILE
+          # 1️⃣ Missing OS Updates
           if [[ "$OS_FAMILY" =~ (ubuntu|debian) ]]; then
-            apt list --upgradable 2>/dev/null | grep -i security >> $LOGFILE || echo "No security updates" >> $LOGFILE
+            MISSING_UPDATES=$(apt list --upgradable 2>/dev/null | grep -i security | awk '{print $1}' | tr '\n' ',' | sed 's/,$//')
           elif [[ "$OS_FAMILY" =~ (rhel|centos|rocky|almalinux) ]]; then
-            yum check-update 2>/dev/null | grep -i security >> $LOGFILE || echo "No security updates" >> $LOGFILE
+            MISSING_UPDATES=$(yum check-update --security 2>/dev/null | awk '{print $1}' | tr '\n' ',' | sed 's/,$//')
           fi
+          [[ -z "$MISSING_UPDATES" ]] && MISSING_UPDATES="None"
 
-          echo "[OUTDATED_PACKAGES]" >> $LOGFILE
+          # 2️⃣ Outdated Packages
           if [[ "$OS_FAMILY" =~ (ubuntu|debian) ]]; then
-            apt list --upgradable 2>/dev/null >> $LOGFILE || echo "No outdated packages" >> $LOGFILE
+            OUTDATED=$(apt list --upgradable 2>/dev/null | grep -v "Listing" | awk -F/ '{print $1}' | tr '\n' ',' | sed 's/,$//')
           else
-            yum check-update 2>/dev/null >> $LOGFILE || echo "No outdated packages" >> $LOGFILE
+            OUTDATED=$(yum check-update 2>/dev/null | awk '{print $1}' | tr '\n' ',' | sed 's/,$//')
           fi
+          [[ -z "$OUTDATED" ]] && OUTDATED="None"
 
-          echo "[KERNEL]" >> $LOGFILE
-          uname -r >> $LOGFILE
+          # 3️⃣ Kernel version
+          KERNEL=$(uname -r)
 
-          echo "[VULNERABLE_APPS]" >> $LOGFILE
+          # 4️⃣ Vulnerable Apps
           if command -v dpkg &>/dev/null; then
-            dpkg -l | egrep "apache2|nginx|mysql|php" >> $LOGFILE || echo "No vulnerable apps found" >> $LOGFILE
+            VULN_APPS=$(dpkg -l | egrep "apache2|nginx|mysql|php" | awk '{print $2}' | tr '\n' ',' | sed 's/,$//')
           elif command -v rpm &>/dev/null; then
-            rpm -qa | egrep "httpd|nginx|mysql|php" >> $LOGFILE || echo "No vulnerable apps found" >> $LOGFILE
+            VULN_APPS=$(rpm -qa | egrep "httpd|nginx|mysql|php" | tr '\n' ',' | sed 's/,$//')
           fi
+          [[ -z "$VULN_APPS" ]] && VULN_APPS="None"
 
-          echo "[WEAK_SETTINGS]" >> $LOGFILE
+          # 5️⃣ Weak settings
           if [[ -f /etc/security/pwquality.conf ]]; then
-            grep -i "minlen" /etc/security/pwquality.conf >> $LOGFILE || echo "minlen not set" >> $LOGFILE
+            WEAK=$(grep -i "minlen" /etc/security/pwquality.conf || echo "minlen not set")
           else
-            echo "pwquality.conf not found" >> $LOGFILE
+            WEAK="pwquality.conf not found"
           fi
 
+          # 🧾 Final single-line output
+          echo "$TIMESTAMP hostname=$HOSTNAME ip=$IP Missing_OS_Updates=\"$MISSING_UPDATES\" Outdated_Packages=\"$OUTDATED\" Weak_Settings=\"$WEAK\" Kernel=\"$KERNEL\" Vulnerable_Apps=\"$VULN_APPS\"" >> "$LOGFILE"
+
+    # -----------------------------
     # Step 6: Run the security scan
+    # -----------------------------
     - name: Execute security scan
       shell: "{{ scan_script_path }}"
       register: scan_result
@@ -110,7 +145,9 @@
       debug:
         msg: "Security scan log generated at {{ client_log_path }}"
 
+    # -----------------------------
     # Step 7: Start Promtail as background process
+    # -----------------------------
     - name: Start Promtail
       shell: "nohup {{ promtail_bin_dir }}/promtail -config.file={{ promtail_config_path }} > /tmp/promtail.log 2>&1 &"
       args:
