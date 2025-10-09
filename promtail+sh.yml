@@ -1,6 +1,6 @@
 ---
 - name: Deploy Promtail and Security Scan on Clients
-  hosts: Tirumangalam                  # Replace with your target group
+  hosts: linux_servers                  # Replace with your target group
   become: yes
   vars:
     promtail_version: "2.9.2"                     # Promtail version
