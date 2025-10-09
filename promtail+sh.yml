@@ -1,37 +1,31 @@
 ---
 - name: Deploy Promtail and Security Scan on Clients
-  hosts: Test1                  # Replace with your target group
+  hosts: Test1
   become: yes
   vars:
-    promtail_version: "2.9.2"                     # Promtail version
+    promtail_version: "2.9.2"
     promtail_bin_dir: /usr/local/bin
     promtail_config_path: /etc/promtail-config.yml
-    loki_url: "http://172.17.9.132:31001/loki/api/v1/push"  # Replace with your Loki URL
+    loki_url: "http://172.17.9.132:31001/loki/api/v1/push"
     scan_script_path: /usr/local/bin/security_scan.sh
     client_log_path: /var/log/security_scan_collector/security_scan.log
 
   tasks:
-    # -----------------------------
     # Step 1: Download Promtail
-    # -----------------------------
     - name: Download Promtail binary
       get_url:
         url: "https://github.com/grafana/loki/releases/download/v{{ promtail_version }}/promtail-linux-amd64.zip"
         dest: "/tmp/promtail-linux-amd64.zip"
         mode: '0644'
 
-    # -----------------------------
     # Step 2: Unzip Promtail
-    # -----------------------------
     - name: Unzip Promtail
       unarchive:
         src: "/tmp/promtail-linux-amd64.zip"
         dest: "/tmp/"
         remote_src: yes
 
-    # -----------------------------
-    # Step 3: Move Promtail binary and make executable
-    # -----------------------------
+    # Step 3: Install Promtail binary
     - name: Install Promtail binary
       copy:
         src: "/tmp/promtail-linux-amd64"
@@ -39,9 +33,7 @@
         mode: '0755'
         remote_src: yes
 
-    # -----------------------------
-    # Step 4: Create Promtail config
-    # -----------------------------
+    # Step 4: Create Promtail config file
     - name: Create Promtail config file
       copy:
         dest: "{{ promtail_config_path }}"
@@ -67,26 +59,14 @@
                     hostname: "{{ inventory_hostname }}"
                     __path__: "{{ client_log_path }}"
 
-              pipeline_stages:
-                - regex:
-                    expression: '^(?P<timestamp>\S+ \S+) hostname=(?P<hostname>\S+) ip=(?P<ip>\S+) Missing_OS_Updates="(?P<missing>[^"]*)" Outdated_Packages="(?P<outdated>[^"]*)" Weak_Settings="(?P<weak>[^"]*)" Kernel="(?P<kernel>[^"]*)" Vulnerable_Apps="(?P<vuln>[^"]*)"'
-                - labels:
-                    hostname:
-                    ip:
-                - timestamp:
-                    source: timestamp
-                    format: "2006-01-02 15:04:05"
-
-    # -----------------------------
-    # Step 5: Deploy security_scan.sh script
-    # -----------------------------
+    # Step 5: Deploy security_scan.sh (updated structured script)
     - name: Deploy security_scan.sh script
       copy:
         dest: "{{ scan_script_path }}"
         mode: '0755'
         content: |
           #!/bin/bash
-          LOGFILE="{{ client_log_path }}"
+          LOGFILE="/var/log/security_scan_collector/security_scan.log"
 
           # Create log directory if missing
           mkdir -p "$(dirname "$LOGFILE")"
@@ -94,7 +74,7 @@
           # Collect system info
           HOSTNAME=$(hostname)
           IP=$(hostname -I | awk '{print $1}')
-          TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S")
           OS_FAMILY=$(awk -F= '/^ID=/{print $2}' /etc/os-release | tr -d '"')
 
           # 1️⃣ Missing OS Updates
@@ -131,12 +111,24 @@
             WEAK="pwquality.conf not found"
           fi
 
-          # 🧾 Final single-line output
-          echo "$TIMESTAMP hostname=$HOSTNAME ip=$IP Missing_OS_Updates=\"$MISSING_UPDATES\" Outdated_Packages=\"$OUTDATED\" Weak_Settings=\"$WEAK\" Kernel=\"$KERNEL\" Vulnerable_Apps=\"$VULN_APPS\"" >> "$LOGFILE"
+          # 🧾 Final structured multi-line output (Grafana-friendly)
+          {
+            echo "===== Security Scan Result ====="
+            echo "Date: $(date +%Y-%m-%d)"
+            echo "Time: $(date +%H:%M:%S)"
+            echo "Hostname: $HOSTNAME"
+            echo "IP: $IP"
+            echo "---------------------------------"
+            echo "Missing_OS_Updates: $MISSING_UPDATES"
+            echo "Outdated_Packages: $OUTDATED"
+            echo "Weak_Settings: $WEAK"
+            echo "Kernel: $KERNEL"
+            echo "Vulnerable_Apps: $VULN_APPS"
+            echo "---------------------------------"
+            echo ""
+          } >> "$LOGFILE"
 
-    # -----------------------------
-    # Step 6: Run the security scan
-    # -----------------------------
+    # Step 6: Execute the security scan
     - name: Execute security scan
       shell: "{{ scan_script_path }}"
       register: scan_result
@@ -145,9 +137,7 @@
       debug:
         msg: "Security scan log generated at {{ client_log_path }}"
 
-    # -----------------------------
-    # Step 7: Start Promtail as background process
-    # -----------------------------
+    # Step 7: Start Promtail
     - name: Start Promtail
       shell: "nohup {{ promtail_bin_dir }}/promtail -config.file={{ promtail_config_path }} > /tmp/promtail.log 2>&1 &"
       args:
