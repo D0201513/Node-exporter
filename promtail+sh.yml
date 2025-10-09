@@ -113,12 +113,12 @@
 
           # 🧾 Final structured multi-line output (Grafana-friendly)
           {
-            echo "===== Security Scan Result ====="
-            echo "Date: $(date +%Y-%m-%d)"
-            echo "Time: $(date +%H:%M:%S)"
-            echo "Hostname: $HOSTNAME"
-            echo "IP: $IP"
-            echo "---------------------------------"
+            # Host and IP
+            echo "hostname=$HOSTNAME"
+            echo "ip=$IP"
+            # Timestamp + summary line (single-line for Grafana-friendly parsing)
+            echo "$(date +'%Y-%m-%d %H:%M:%S') hostname=$HOSTNAME ip=$IP
+            # Attributes line by line
             echo "Missing_OS_Updates: $MISSING_UPDATES"
             echo "Outdated_Packages: $OUTDATED"
             echo "Weak_Settings: $WEAK"
