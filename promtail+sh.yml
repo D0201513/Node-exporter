@@ -1,6 +1,6 @@
 ---
 - name: Deploy Promtail and Security Scan on Clients
-  hosts: Tirumangalam                  # Replace with your target group
+  hosts: 10.17.11.17                 # Replace with your target group
   become: yes
   vars:
     promtail_version: "2.9.2"                     # Promtail version
@@ -48,7 +48,7 @@
         mode: '0644'
         content: |
           server:
-            http_listen_port: 9080
+            http_listen_port: 9081
             grpc_listen_port: 0
 
           positions:
