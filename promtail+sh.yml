@@ -1,6 +1,6 @@
 ---
 - name: Deploy Promtail and Security Scan on Clients
-  hosts: 10.17.11.17                 # Replace with your target host or group
+  hosts: 10.17.10.25                 # Replace with your target host or group
   become: yes
   vars:
     promtail_version: "2.9.2"                     # Promtail version
