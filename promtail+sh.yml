@@ -1,6 +1,6 @@
 ---
 - name: Deploy Promtail and Security Scan on Clients
-  hosts: 10.17.11.17                 # Replace with your target group
+  hosts: 10.17.11.17                 # Replace with your target host or group
   become: yes
   vars:
     promtail_version: "2.9.2"                     # Promtail version
@@ -76,9 +76,10 @@
                 - timestamp:
                     source: timestamp
                     format: "2006-01-02 15:04:05"
+                    timezone: Local
 
     # -----------------------------
-    # Step 5: Deploy security_scan.sh script
+    # Step 5: Deploy corrected security_scan.sh script
     # -----------------------------
     - name: Deploy security_scan.sh script
       copy:
@@ -86,9 +87,8 @@
         mode: '0755'
         content: |
           #!/bin/bash
-          LOGFILE="{{ client_log_path }}"
 
-          # Create log directory if missing
+          LOGFILE="{{ client_log_path }}"
           mkdir -p "$(dirname "$LOGFILE")"
 
           # Collect system info
@@ -99,17 +99,17 @@
 
           # 1️⃣ Missing OS Updates
           if [[ "$OS_FAMILY" =~ (ubuntu|debian) ]]; then
-            MISSING_UPDATES=$(apt list --upgradable 2>/dev/null | grep -i security | awk '{print $1}' | tr '\n' ',' | sed 's/,$//')
+              MISSING_UPDATES=$(apt list --upgradable 2>/dev/null | grep -i security | awk '{print $1}' | tr '\n' ',' | sed 's/,$//')
           elif [[ "$OS_FAMILY" =~ (rhel|centos|rocky|almalinux) ]]; then
-            MISSING_UPDATES=$(yum check-update --security 2>/dev/null | awk '{print $1}' | tr '\n' ',' | sed 's/,$//')
+              MISSING_UPDATES=$(yum check-update --security 2>/dev/null | awk '{print $1}' | tr '\n' ',' | sed 's/,$//')
           fi
           [[ -z "$MISSING_UPDATES" ]] && MISSING_UPDATES="None"
 
           # 2️⃣ Outdated Packages
           if [[ "$OS_FAMILY" =~ (ubuntu|debian) ]]; then
-            OUTDATED=$(apt list --upgradable 2>/dev/null | grep -v "Listing" | awk -F/ '{print $1}' | tr '\n' ',' | sed 's/,$//')
+              OUTDATED=$(apt list --upgradable 2>/dev/null | grep -v "Listing" | awk -F/ '{print $1}' | tr '\n' ',' | sed 's/,$//')
           else
-            OUTDATED=$(yum check-update 2>/dev/null | awk '{print $1}' | tr '\n' ',' | sed 's/,$//')
+              OUTDATED=$(yum check-update 2>/dev/null | awk '{print $1}' | tr '\n' ',' | sed 's/,$//')
           fi
           [[ -z "$OUTDATED" ]] && OUTDATED="None"
 
@@ -118,17 +118,17 @@
 
           # 4️⃣ Vulnerable Apps
           if command -v dpkg &>/dev/null; then
-            VULN_APPS=$(dpkg -l | egrep "apache2|nginx|mysql|php" | awk '{print $2}' | tr '\n' ',' | sed 's/,$//')
+              VULN_APPS=$(dpkg -l | egrep "apache2|nginx|mysql|php" | awk '{print $2}' | tr '\n' ',' | sed 's/,$//')
           elif command -v rpm &>/dev/null; then
-            VULN_APPS=$(rpm -qa | egrep "httpd|nginx|mysql|php" | tr '\n' ',' | sed 's/,$//')
+              VULN_APPS=$(rpm -qa | egrep "httpd|nginx|mysql|php" | tr '\n' ',' | sed 's/,$//')
           fi
           [[ -z "$VULN_APPS" ]] && VULN_APPS="None"
 
           # 5️⃣ Weak settings
           if [[ -f /etc/security/pwquality.conf ]]; then
-            WEAK=$(grep -i "minlen" /etc/security/pwquality.conf || echo "minlen not set")
+              WEAK=$(grep -i "minlen" /etc/security/pwquality.conf || echo "minlen not set")
           else
-            WEAK="pwquality.conf not found"
+              WEAK="pwquality.conf not found"
           fi
 
           # 🧾 Final single-line output
