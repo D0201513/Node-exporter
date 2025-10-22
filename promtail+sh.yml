@@ -8,7 +8,7 @@
     promtail_config_path: /etc/promtail-config.yml
     loki_url: "http://172.17.9.132:31001/loki/api/v1/push"
     scan_script_path: /usr/local/bin/security_scan.sh
-    client_log_path: /var/log/security_scan_collector/security_scan.log
+    client_log_path: /var/log/security_scan_collector/*.log
 
   tasks:
     # Step 1: Download Promtail binary
