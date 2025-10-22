@@ -8,7 +8,9 @@
     promtail_config_path: /etc/promtail-config.yml
     loki_url: "http://172.17.9.132:31001/loki/api/v1/push"
     scan_script_path: /usr/local/bin/security_scan.sh
-    client_log_path: /var/log/security_scan_collector/*.log
+    client_log_dir: /var/log/security_scan_collector
+    client_log_file: security_scan.log
+    client_log_path: "{{ client_log_dir }}/{{ client_log_file }}"
 
   tasks:
     # Step 1: Download Promtail binary
@@ -41,7 +43,7 @@
         mode: '0755'
       loop:
         - /var/lib/promtail
-        - "{{ client_log_path | dirname }}"
+        - "{{ client_log_dir }}"
 
     # Step 5: Deploy security_scan.sh
     - name: Deploy security_scan.sh script
@@ -127,7 +129,7 @@
                   labels:
                     job: security_scan
                     hostname: "{{ inventory_hostname }}"
-                    __path__: "{{ client_log_path }}"
+                    __path__: "{{ client_log_dir }}/*.log"
 
               pipeline_stages:
                 - regex:
