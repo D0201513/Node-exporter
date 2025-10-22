@@ -11,27 +11,21 @@
     client_log_path: /var/log/security_scan_collector/security_scan.log
 
   tasks:
-    # -----------------------------
     # Step 1: Download Promtail binary
-    # -----------------------------
     - name: Download Promtail binary
       get_url:
         url: "https://github.com/grafana/loki/releases/download/v{{ promtail_version }}/promtail-linux-amd64.zip"
         dest: "/tmp/promtail-linux-amd64.zip"
         mode: '0644'
 
-    # -----------------------------
     # Step 2: Unzip Promtail
-    # -----------------------------
     - name: Unzip Promtail
       unarchive:
         src: "/tmp/promtail-linux-amd64.zip"
         dest: "/tmp/"
         remote_src: yes
 
-    # -----------------------------
     # Step 3: Install Promtail binary
-    # -----------------------------
     - name: Install Promtail binary
       copy:
         src: "/tmp/promtail-linux-amd64"
@@ -39,9 +33,7 @@
         mode: '0755'
         remote_src: yes
 
-    # -----------------------------
-    # Step 4: Create directories for Promtail and logs
-    # -----------------------------
+    # Step 4: Create directories
     - name: Create required directories
       file:
         path: "{{ item }}"
@@ -51,9 +43,7 @@
         - /var/lib/promtail
         - "{{ client_log_path | dirname }}"
 
-    # -----------------------------
-    # Step 5: Deploy security_scan.sh script
-    # -----------------------------
+    # Step 5: Deploy security_scan.sh
     - name: Deploy security_scan.sh script
       copy:
         dest: "{{ scan_script_path }}"
@@ -102,15 +92,11 @@
               WEAK="pwquality.conf not found"
           fi
 
-          # 🧾 Final single-line output
           echo "$TIMESTAMP hostname=$HOSTNAME ip=$IP Missing_OS_Updates=\"$MISSING_UPDATES\" Outdated_Packages=\"$OUTDATED\" Weak_Settings=\"$WEAK\" Kernel=\"$KERNEL\" Vulnerable_Apps=\"$VULN_APPS\"" >> "$LOGFILE"
 
-    # -----------------------------
-    # Step 6: Run the security scan once before Promtail starts
-    # -----------------------------
+    # Step 6: Run once to generate log
     - name: Run initial security scan
       shell: "{{ scan_script_path }}"
-      register: scan_result
 
     - name: Wait for log file creation
       wait_for:
@@ -118,9 +104,7 @@
         state: present
         timeout: 30
 
-    # -----------------------------
-    # Step 7: Create Promtail config file
-    # -----------------------------
+    # Step 7: Promtail config
     - name: Create Promtail config file
       copy:
         dest: "{{ promtail_config_path }}"
@@ -139,12 +123,11 @@
           scrape_configs:
             - job_name: security_scan
               static_configs:
-                - targets:
-                    - localhost
+                - targets: [localhost]
                   labels:
                     job: security_scan
                     hostname: "{{ inventory_hostname }}"
-                    __path__: "{{ client_log_path | dirname }}/*.log"
+                    __path__: "{{ client_log_path }}"
 
               pipeline_stages:
                 - regex:
@@ -157,34 +140,26 @@
                     format: "2006-01-02 15:04:05"
                     timezone: Local
 
-    # -----------------------------
-    # Step 8: Restart Promtail cleanly
-    # -----------------------------
-    - name: Stop any existing Promtail process
-      shell: "pkill -f promtail || true"
+    # Step 8: Create systemd service for Promtail
+    - name: Create Promtail systemd service
+      copy:
+        dest: /etc/systemd/system/promtail.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Promtail Log Forwarder
+          After=network.target
 
-    - name: Start Promtail in background
-      shell: "nohup {{ promtail_bin_dir }}/promtail -config.file={{ promtail_config_path }} > /tmp/promtail.log 2>&1 &"
-      args:
-        executable: /bin/bash
+          [Service]
+          ExecStart={{ promtail_bin_dir }}/promtail -config.file={{ promtail_config_path }}
+          Restart=always
 
-    - name: Confirm Promtail started
-      shell: "pgrep -a promtail"
-      register: promtail_status
-      changed_when: false
+          [Install]
+          WantedBy=multi-user.target
 
-    - name: Show Promtail process info
-      debug:
-        msg: "{{ promtail_status.stdout_lines }}"
-
-    # -----------------------------
-    # Step 9: Verify log forwarding
-    # -----------------------------
-    - name: Check Promtail log for errors
-      shell: "grep -i error /tmp/promtail.log || true"
-      register: promtail_errors
-      changed_when: false
-
-    - name: Display Promtail errors if any
-      debug:
-        msg: "{{ promtail_errors.stdout_lines }}"
+    - name: Reload systemd and enable Promtail
+      systemd:
+        daemon_reload: yes
+        name: promtail
+        enabled: yes
+        state: restarted
