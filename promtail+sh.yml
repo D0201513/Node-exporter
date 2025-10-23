@@ -133,13 +133,13 @@
 
               pipeline_stages:
                 - regex:
-                    expression: '^(?P<timestamp>\S+\s+\S+)\s+hostname=(?P<hostname>\S+)\s+ip=(?P<ip>\S+)\s+Missing_OS_Updates="(?P<missing>[^"]*)"\s+Outdated_Packages="(?P<outdated>[^"]*)"\s+Weak_Settings="(?P<weak>[^"]*)"\s+Kernel="(?P<kernel>[^"]*)"\s+Vulnerable_Apps="(?P<vuln>[^"]*)"'
+                    expression: '^(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+hostname=(?P<hostname>\S+)\s+ip=(?P<ip>\S+)\s+Missing_OS_Updates="(?P<missing>[^"]*)"\s+Outdated_Packages="(?P<outdated>[^"]*)"\s+Weak_Settings="(?P<weak>[^"]*)"\s+Kernel="(?P<kernel>[^"]*)"\s+Vulnerable_Apps="(?P<vuln>[^"]*)"'
                 - labels:
                     hostname:
                     ip:
                 - timestamp:
                     source: timestamp
-                    format: "2006-01-02 15:04:05"
+                    format: "RFC3339"
                     timezone: Local
 
     # Step 8: Create systemd service for Promtail
