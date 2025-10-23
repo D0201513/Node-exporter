@@ -140,7 +140,7 @@
                 - timestamp:
                     source: timestamp
                     format: "RFC3339"
-                    timezone: Local
+                    timezone: UTC
 
     # Step 8: Create systemd service for Promtail
     - name: Create Promtail systemd service
