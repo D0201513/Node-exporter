@@ -22,14 +22,14 @@
         mode: '0755'
 
     - name: Install pip system-wide
-      command: sudo python3 /tmp/get-pip.py --break-system-packages
+      command: python3 /tmp/get-pip.py --break-system-packages
       args:
         creates: /usr/local/bin/pip3
 
     - name: Install Python dependencies globally
-      command: sudo python3 -m pip install --break-system-packages prometheus_client psutil distro
+      command: python3 -m pip install --break-system-packages prometheus_client psutil distro
 
-    - name: Create /opt directory if it does not exist
+    - name: Ensure /opt directory exists
       file:
         path: /opt
         state: directory
@@ -47,9 +47,9 @@
           import subprocess
           import re
           import distro
+          import os
           from prometheus_client import start_http_server, Gauge, Info
 
-          # Hostname
           hostname = socket.gethostname()
 
           # ----------------------------
@@ -64,6 +64,12 @@
           users_gauge = Gauge('asset_logged_in_users', 'Number of logged-in users', ['hostname'])
           uptime_gauge = Gauge('asset_uptime_seconds', 'System uptime in seconds', ['hostname'])
           cpu_utilization = Gauge('asset_cpu_utilization_percent', 'CPU utilization percentage', ['hostname'])
+
+          # ----------------------------
+          # Cache Metrics
+          # ----------------------------
+          CACHE_STATUS = Gauge('browser_cache_cleared', '1 if cache cleared, 0 otherwise', ['hostname'])
+          CACHE_TIME = Gauge('browser_cache_last_cleared_timestamp', 'Unix timestamp of last cache clear', ['hostname'])
 
           # ----------------------------
           # Software Inventory
@@ -92,7 +98,7 @@
           bios_info = Info('asset_bios_info', 'BIOS version')
 
           # ----------------------------
-          # Helpers
+          # Helper Functions
           # ----------------------------
           def get_ip():
               for iface_name, iface_addrs in psutil.net_if_addrs().items():
@@ -147,30 +153,6 @@
               except Exception:
                   return 'unknown'
 
-          def get_installed_software():
-              """Parse /usr/local/bin/installed_packages_history.sh output"""
-              software_list = []
-              try:
-                  output = subprocess.check_output(['/usr/local/bin/installed_packages_history.sh'], text=True)
-                  for line in output.splitlines():
-                      if line.startswith("DATE") or not line.strip():
-                          continue
-                      parts = line.split()
-                      if len(parts) >= 5:
-                          installed_date = f"{parts[0]} {parts[1]}"
-                          pkg_name = parts[2]
-                          version = parts[3]
-                          user = parts[4]
-                          software_list.append({
-                              'name': pkg_name,
-                              'version': version,
-                              'installed_date': installed_date,
-                              'user': user
-                          })
-              except Exception:
-                  pass
-              return software_list
-
           def get_cpu_generation(cpu_model_str):
               match = re.search(r'i[3579]-(\d{4,5})', cpu_model_str)
               return match.group(1) if match else 'unknown'
@@ -196,7 +178,33 @@
               return "unknown"
 
           # ----------------------------
-          # Collector
+          # Cache Monitoring Functions
+          # ----------------------------
+          def get_cache_status():
+              cache_paths = [
+                  "/home/user/.cache/mozilla/firefox/",
+                  "/home/user/.cache/google-chrome/"
+              ]
+              for cache_path in cache_paths:
+                  if os.path.exists(cache_path):
+                      for root, dirs, files in os.walk(cache_path):
+                          if files or dirs:
+                              return 0  # Cache not cleared
+              return 1  # Cache cleared
+
+          def get_last_cleared_time():
+              timestamp_file = "/tmp/cache_cleared_timestamp"
+              if os.path.exists(timestamp_file):
+                  return os.path.getmtime(timestamp_file)
+              return 0
+
+          def update_cache_metrics():
+              hostname = socket.gethostname()
+              CACHE_STATUS.labels(hostname=hostname).set(get_cache_status())
+              CACHE_TIME.labels(hostname=hostname).set(get_last_cleared_time())
+
+          # ----------------------------
+          # Main Collector
           # ----------------------------
           def collect():
               ram = psutil.virtual_memory()
@@ -204,13 +212,11 @@
               cpu_gen = get_cpu_generation(cpu_info)
               os_flavor = distro.name(pretty=True) or platform.platform()
 
-              # Core metrics
               cpu_cores.labels(hostname=hostname).set(psutil.cpu_count(logical=False))
               ram_used.labels(hostname=hostname).set(round(ram.used / 1024 / 1024))
               ram_total.labels(hostname=hostname).set(round(ram.total / 1024 / 1024))
               cpu_utilization.labels(hostname=hostname).set(psutil.cpu_percent(interval=None))
 
-              # Info metrics
               cpu_model.info({'hostname': hostname, 'model': get_cpu_model()})
               processor_model.info({'hostname': hostname, 'processor_model': get_processor_model()})
               cpu_generation.info({'hostname': hostname, 'generation': cpu_gen})
@@ -229,7 +235,6 @@
               model_info.info({'hostname': hostname, 'model': get_model()})
               bios_info.info({'hostname': hostname, 'bios': get_bios_version()})
 
-              # Disk usage
               for part in psutil.disk_partitions(all=False):
                   try:
                       usage = psutil.disk_usage(part.mountpoint)
@@ -238,33 +243,23 @@
                   except Exception:
                       continue
 
-              # Extra system info
-              software_list = get_installed_software()
-              packages_count.labels(hostname=hostname).set(len(software_list))
               users_gauge.labels(hostname=hostname).set(len(psutil.users()))
               uptime_gauge.labels(hostname=hostname).set(time.time() - psutil.boot_time())
 
-              # Software Inventory Metrics
-              for software in software_list:
-                  software_info.labels(
-                      hostname=hostname,
-                      software_name=software['name'],
-                      version=software['version'],
-                      installed_date=software['installed_date'],
-                      user=software['user']
-                  ).set(1)
+              # Update cache metrics too
+              update_cache_metrics()
 
           # ----------------------------
-          # Main
+          # Main Loop
           # ----------------------------
           if __name__ == '__main__':
-              print(f"📡 Exporter running on http://0.0.0.0:9888/metrics")
+              print("📡 Exporter running on http://0.0.0.0:9888/metrics")
               start_http_server(9888, addr="0.0.0.0")
               while True:
                   collect()
                   time.sleep(30)
 
-    - name: Run the exporter
-      shell: "nohup sudo python3 /opt/asset_agent.py > /var/log/asset_agent.log 2>&1 &"
+    - name: Run the exporter in background
+      shell: "nohup python3 /opt/asset_agent.py > /var/log/asset_agent.log 2>&1 &"
       args:
         chdir: /opt
